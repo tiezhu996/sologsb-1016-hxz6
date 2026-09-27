@@ -26,6 +26,7 @@ export interface Cue {
   soundEffectId?: string
   transition: string
   manualDuration?: number
+  leadIn?: number
 }
 
 export interface Scene {

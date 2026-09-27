@@ -30,6 +30,7 @@ const {
   saveState,
   durationOfCue,
   durationOfScene,
+  timelineOfScene,
   updateProject,
   updateScene,
   updateCue,
@@ -90,6 +91,7 @@ const projectMinutes = computed(() => `${Math.floor(totalDuration.value / 60)}:$
 const pendingCount = computed(() => pendingChanges.value.length)
 const warningCount = computed(() => warnings.value.length)
 const saveLabel = computed(() => saveState.value === 'saved' ? '已保存到本机' : '正在保存…')
+const selectedTimeline = computed(() => (selectedScene.value ? timelineOfScene(selectedScene.value) : []))
 
 function cueName(cue: Cue) {
   if (cue.kind === 'dialogue') return state.value.document.characters.find((item) => item.id === cue.characterId)?.name ?? '未指定角色'
@@ -302,7 +304,21 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <span class="cue-number">{{ String(index + 1).padStart(2, '0') }}</span>
                   <n-select class="kind-select" size="small" :value="cue.kind" :options="kindOptions" @update:value="changeCueKind(cue, $event)" />
                   <n-tag size="small" :bordered="false">{{ cueName(cue) }}</n-tag>
+                  <span class="start-pill">起 {{ (selectedTimeline[index]?.start ?? 0).toFixed(1) }}s</span>
                   <span class="duration-pill">{{ durationOfCue(cue).toFixed(1) }}s</span>
+                  <label class="lead-in-control" :title="index === 0 ? '每场第一条没有可叠的前一条' : '与上一条末尾重叠的秒数；超过上一条时长会自动收住'">
+                    <span>提前</span>
+                    <n-input-number
+                      size="tiny"
+                      :value="cue.leadIn ?? 0"
+                      :min="0"
+                      :max="index > 0 ? durationOfCue(selectedScene.cues[index - 1]) : 0"
+                      :step="0.5"
+                      :disabled="index === 0"
+                      @update:value="updateCue(cue.id, 'leadIn', $event ?? 0)"
+                    />
+                    <span>秒入声</span>
+                  </label>
                   <n-button size="tiny" tertiary type="error" @click="deleteCue(cue.id)">删除</n-button>
                 </div>
 

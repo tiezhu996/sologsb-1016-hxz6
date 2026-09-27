@@ -6,12 +6,45 @@ const STORAGE_KEY = 'sologsb-1016-studio-v1'
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 const uid = (prefix: string) => `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
 
+function durationOfCueIn(document: StudioDocument, cue: Cue): number {
+  if (cue.manualDuration !== undefined) return cue.manualDuration
+  if (cue.kind === 'sfx') {
+    return document.soundEffects.find((effect) => effect.id === cue.soundEffectId)?.duration ?? 6
+  }
+  if (cue.kind === 'transition') return 3
+  const pauses = (cue.text.match(/[，。！？；、…]/g)?.length ?? 0) * 0.22
+  const effectiveRate = cue.rate || 1
+  return Number((cue.text.length / (4.2 * effectiveRate) + pauses).toFixed(1))
+}
+
+// 提前入声只与同场紧挨着的前一条重叠，且不能超过前一条自身的时长。
+function effectiveLeadInIn(document: StudioDocument, cue: Cue, previous?: Cue): number {
+  if (!previous || !cue.leadIn || cue.leadIn <= 0) return 0
+  return Number(Math.min(cue.leadIn, durationOfCueIn(document, previous)).toFixed(1))
+}
+
+// 前一条被删除、换序或因改语速等原因变短时，后一条记录的提前量统一在这里收回。
+function normalizeLeadIns(document: StudioDocument) {
+  for (const scene of document.scenes) {
+    let previous: Cue | undefined
+    for (const cue of scene.cues) {
+      const raw = Number(cue.leadIn) || 0
+      const clamped = previous ? Math.min(Math.max(0, raw), durationOfCueIn(document, previous)) : 0
+      cue.leadIn = Number(clamped.toFixed(1))
+      previous = cue
+    }
+  }
+}
+
 function loadState(): StudioState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (raw) {
       const parsed = JSON.parse(raw) as StudioState
-      if (parsed.document?.scenes?.length) return parsed
+      if (parsed.document?.scenes?.length) {
+        normalizeLeadIns(parsed.document)
+        return parsed
+      }
     }
   } catch {
     // A corrupt local draft should not prevent access to the built-in example.
@@ -35,19 +68,27 @@ export function useStudio() {
 
   const selectedScene = computed(() => state.value.document.scenes.find((scene) => scene.id === selectedSceneId.value) ?? state.value.document.scenes[0])
 
-  function durationOfCue(cue: Cue): number {
-    if (cue.manualDuration !== undefined) return cue.manualDuration
-    if (cue.kind === 'sfx') {
-      return state.value.document.soundEffects.find((effect) => effect.id === cue.soundEffectId)?.duration ?? 6
-    }
-    if (cue.kind === 'transition') return 3
-    const pauses = (cue.text.match(/[，。！？；、…]/g)?.length ?? 0) * 0.22
-    const effectiveRate = cue.rate || 1
-    return Number((cue.text.length / (4.2 * effectiveRate) + pauses).toFixed(1))
+  const durationOfCue = (cue: Cue, document: StudioDocument = state.value.document) => durationOfCueIn(document, cue)
+  const effectiveLeadIn = (cue: Cue, previous?: Cue, document: StudioDocument = state.value.document) => effectiveLeadInIn(document, cue, previous)
+
+  function durationOfScene(scene: Scene, document: StudioDocument = state.value.document): number {
+    let total = 0
+    scene.cues.forEach((cue, index) => {
+      total += durationOfCueIn(document, cue) - effectiveLeadInIn(document, cue, scene.cues[index - 1])
+    })
+    return Number(total.toFixed(1))
   }
 
-  function durationOfScene(scene: Scene): number {
-    return Number(scene.cues.reduce((total, cue) => total + durationOfCue(cue), 0).toFixed(1))
+  // 每条提示项在场内的起始秒、与上一条的有效提前量和自身时长。
+  function timelineOfScene(scene: Scene, document: StudioDocument = state.value.document) {
+    let cursor = 0
+    return scene.cues.map((cue, index) => {
+      const duration = durationOfCueIn(document, cue)
+      const leadIn = effectiveLeadInIn(document, cue, scene.cues[index - 1])
+      const start = cursor - leadIn
+      cursor = start + duration
+      return { cue, start: Number(start.toFixed(1)), leadIn, duration }
+    })
   }
 
   const totalDuration = computed(() => state.value.document.scenes.reduce((total, scene) => total + durationOfScene(scene), 0))
@@ -120,6 +161,7 @@ export function useStudio() {
     const before = clone(state.value.document)
     const document = clone(state.value.document)
     mutator(document)
+    normalizeLeadIns(document)
     undoStack.value.push(before)
     if (undoStack.value.length > 60) undoStack.value.shift()
     redoStack.value = []
@@ -175,6 +217,7 @@ export function useStudio() {
         if (!cue) continue
         if (field === 'rate') cue.rate = Number(value) as Cue['rate']
         else if (field === 'manualDuration') cue.manualDuration = value === '' || value === undefined ? undefined : Number(value)
+        else if (field === 'leadIn') cue.leadIn = Math.max(0, Number(value) || 0)
         else if (field === 'kind') cue.kind = value as CueKind
         else cue[field] = (value ?? '') as never
         break
@@ -223,7 +266,8 @@ export function useStudio() {
         rate: 1,
         soundEffectId: kind === 'sfx' ? document.soundEffects[0]?.id : undefined,
         transition: kind === 'transition' ? '淡出' : '',
-        manualDuration: kind === 'transition' ? 3 : undefined
+        manualDuration: kind === 'transition' ? 3 : undefined,
+        leadIn: 0
       })
     })
     selectedCueId.value = id
@@ -323,10 +367,10 @@ export function useStudio() {
       lines.push(`${scene.code}｜${scene.title}`)
       lines.push(`场景：${scene.location} / ${scene.timeOfDay}`)
       lines.push(`转场：${scene.transition}`)
-      lines.push(`场次限额：${scene.durationLimit} 秒｜预计：${durationOfScene(scene)} 秒`)
+      lines.push(`场次限额：${scene.durationLimit} 秒｜预计：${durationOfScene(scene, document)} 秒（已扣提前入声重叠）`)
       lines.push('-'.repeat(34))
-      scene.cues.forEach((cue, cueIndex) => {
-        const prefix = `${String(cueIndex + 1).padStart(2, '0')} [${durationOfCue(cue).toFixed(1)}s]`
+      timelineOfScene(scene, document).forEach(({ cue, start, leadIn, duration }, cueIndex) => {
+        const prefix = `${String(cueIndex + 1).padStart(2, '0')} [起始 ${start.toFixed(1)}s｜提前 ${leadIn.toFixed(1)}s｜时长 ${duration.toFixed(1)}s]`
         if (cue.kind === 'dialogue') {
           const role = document.characters.find((character) => character.id === cue.characterId)?.name ?? '未指定角色'
           lines.push(`${prefix} ${role}｜${cue.emotion || '自然'}｜语速 ${cue.rate}`)
@@ -375,6 +419,8 @@ export function useStudio() {
     saveState,
     durationOfCue,
     durationOfScene,
+    effectiveLeadIn,
+    timelineOfScene,
     updateProject,
     updateScene,
     updateCue,

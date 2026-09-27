@@ -74,7 +74,10 @@ h3 { margin: 3px 0 0; font-size: 21px; }
 .cue-topline { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
 .cue-number { color: #66738a; font: 700 11px monospace; }
 .kind-select { width: 92px; }
-.duration-pill { margin-left: auto; padding: 3px 8px; color: #8492a9; border-radius: 99px; background: #0e1420; font: 700 11px monospace; }
+.start-pill { margin-left: auto; padding: 3px 8px; color: #73daca; border-radius: 99px; background: #0e1420; font: 700 11px monospace; }
+.duration-pill { padding: 3px 8px; color: #8492a9; border-radius: 99px; background: #0e1420; font: 700 11px monospace; }
+.lead-in-control { display: flex; align-items: center; gap: 5px; color: #78859d; font-size: 11px; white-space: nowrap; }
+.lead-in-control .n-input-number { width: 72px; }
 .cue-grid { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 8px; }
 .review-column :deep(.n-tabs-nav) { margin-bottom: 12px; }
 .review-list { display: grid; gap: 10px; max-height: calc(100vh - 260px); overflow-y: auto; padding: 2px 2px 30px; }
