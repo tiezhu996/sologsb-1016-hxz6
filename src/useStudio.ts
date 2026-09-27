@@ -1,6 +1,6 @@
 import { computed, ref, watch } from 'vue'
 import { sampleDocument } from './sample'
-import type { Cue, CueKind, FrozenVersion, PendingChange, Scene, StudioDocument, StudioState, WarningItem } from './types'
+import type { Cue, CueKind, CueTiming, FrozenVersion, PendingChange, Scene, StudioDocument, StudioState, WarningItem } from './types'
 
 const STORAGE_KEY = 'sologsb-1016-studio-v1'
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T
@@ -35,10 +35,10 @@ export function useStudio() {
 
   const selectedScene = computed(() => state.value.document.scenes.find((scene) => scene.id === selectedSceneId.value) ?? state.value.document.scenes[0])
 
-  function durationOfCue(cue: Cue): number {
+  function durationOfCue(cue: Cue, document: StudioDocument = state.value.document): number {
     if (cue.manualDuration !== undefined) return cue.manualDuration
     if (cue.kind === 'sfx') {
-      return state.value.document.soundEffects.find((effect) => effect.id === cue.soundEffectId)?.duration ?? 6
+      return document.soundEffects.find((effect) => effect.id === cue.soundEffectId)?.duration ?? 6
     }
     if (cue.kind === 'transition') return 3
     const pauses = (cue.text.match(/[，。！？；、…]/g)?.length ?? 0) * 0.22
@@ -46,8 +46,31 @@ export function useStudio() {
     return Number((cue.text.length / (4.2 * effectiveRate) + pauses).toFixed(1))
   }
 
-  function durationOfScene(scene: Scene): number {
-    return Number(scene.cues.reduce((total, cue) => total + durationOfCue(cue), 0).toFixed(1))
+  // 提前入声只与紧挨着的前一条重叠，填入量超出前一条自身时长时按前一条时长收住
+  function effectiveLeadIn(scene: Scene, cueIndex: number, document: StudioDocument = state.value.document): number {
+    const cue = scene.cues[cueIndex]
+    const previous = scene.cues[cueIndex - 1]
+    if (!cue || !previous) return 0
+    return Math.min(Math.max(0, cue.leadIn ?? 0), durationOfCue(previous, document))
+  }
+
+  function cueTimings(scene: Scene, document: StudioDocument = state.value.document): CueTiming[] {
+    const timings: CueTiming[] = []
+    let cursor = 0
+    scene.cues.forEach((cue, cueIndex) => {
+      const duration = durationOfCue(cue, document)
+      const leadIn = effectiveLeadIn(scene, cueIndex, document)
+      const start = Math.max(0, Number((cursor - leadIn).toFixed(1)))
+      timings.push({ start, leadIn, duration })
+      cursor = Number((start + duration).toFixed(1))
+    })
+    return timings
+  }
+
+  function durationOfScene(scene: Scene, document: StudioDocument = state.value.document): number {
+    const timings = cueTimings(scene, document)
+    const last = timings[timings.length - 1]
+    return last ? Number((last.start + last.duration).toFixed(1)) : 0
   }
 
   const totalDuration = computed(() => state.value.document.scenes.reduce((total, scene) => total + durationOfScene(scene), 0))
@@ -171,12 +194,25 @@ export function useStudio() {
   function updateCue(cueId: string, field: keyof Cue, value: string | number | undefined) {
     commit(`修改台词 ${state.value.document.scenes.flatMap((scene) => scene.cues).find((cue) => cue.id === cueId)?.text.slice(0, 12) ?? ''}`, (document) => {
       for (const scene of document.scenes) {
-        const cue = scene.cues.find((item) => item.id === cueId)
-        if (!cue) continue
+        const cueIndex = scene.cues.findIndex((item) => item.id === cueId)
+        if (cueIndex < 0) continue
+        const cue = scene.cues[cueIndex]
         if (field === 'rate') cue.rate = Number(value) as Cue['rate']
         else if (field === 'manualDuration') cue.manualDuration = value === '' || value === undefined ? undefined : Number(value)
         else if (field === 'kind') cue.kind = value as CueKind
-        else cue[field] = (value ?? '') as never
+        else if (field === 'leadIn') {
+          const previous = scene.cues[cueIndex - 1]
+          const maxLead = previous ? durationOfCue(previous, document) : 0
+          const raw = value === '' || value === undefined ? 0 : Math.round(Number(value) * 10) / 10
+          cue.leadIn = Math.min(Math.max(0, raw), maxLead) || undefined
+        } else cue[field] = (value ?? '') as never
+        // 前一条因改语速、改文本或换素材变短时，后面那条提前量中超出的部分要收回
+        if (field !== 'leadIn') {
+          const next = scene.cues[cueIndex + 1]
+          if (next && next.leadIn !== undefined && next.leadIn > durationOfCue(cue, document)) {
+            next.leadIn = durationOfCue(cue, document) || undefined
+          }
+        }
         break
       }
     })
@@ -223,7 +259,8 @@ export function useStudio() {
         rate: 1,
         soundEffectId: kind === 'sfx' ? document.soundEffects[0]?.id : undefined,
         transition: kind === 'transition' ? '淡出' : '',
-        manualDuration: kind === 'transition' ? 3 : undefined
+        manualDuration: kind === 'transition' ? 3 : undefined,
+        leadIn: undefined
       })
     })
     selectedCueId.value = id
@@ -231,7 +268,14 @@ export function useStudio() {
 
   function deleteCue(cueId: string) {
     commit('删除提示项', (document) => {
-      for (const scene of document.scenes) scene.cues = scene.cues.filter((cue) => cue.id !== cueId)
+      for (const scene of document.scenes) {
+        const cueIndex = scene.cues.findIndex((cue) => cue.id === cueId)
+        if (cueIndex < 0) continue
+        scene.cues.splice(cueIndex, 1)
+        // 紧挨着的前一条被拿掉，后面那条的提前入声失去重叠对象，需收回到 0
+        const follower = scene.cues[cueIndex]
+        if (follower) follower.leadIn = undefined
+      }
     })
   }
 
@@ -243,8 +287,14 @@ export function useStudio() {
       const fromIndex = scene.cues.findIndex((cue) => cue.id === cueId)
       const toIndex = scene.cues.findIndex((cue) => cue.id === targetCueId)
       if (fromIndex < 0 || toIndex < 0) return
+      const previousByCue = new Map(scene.cues.map((cue, index) => [cue.id, index === 0 ? '' : scene.cues[index - 1].id]))
       const [moved] = scene.cues.splice(fromIndex, 1)
       scene.cues.splice(toIndex, 0, moved)
+      // 提前量只认紧挨着的前一条：相邻关系变化的提示项，其提前量收回，需重新设置
+      scene.cues.forEach((cue, index) => {
+        const previousId = index === 0 ? '' : scene.cues[index - 1].id
+        if (cue.leadIn !== undefined && previousByCue.get(cue.id) !== previousId) cue.leadIn = undefined
+      })
     })
   }
 
@@ -320,13 +370,17 @@ export function useStudio() {
       ''
     ]
     document.scenes.forEach((scene, sceneIndex) => {
+      const timings = cueTimings(scene, document)
+      const sceneDuration = durationOfScene(scene, document)
+      const overlap = Number((timings.reduce((sum, timing) => sum + timing.duration, 0) - sceneDuration).toFixed(1))
       lines.push(`${scene.code}｜${scene.title}`)
       lines.push(`场景：${scene.location} / ${scene.timeOfDay}`)
       lines.push(`转场：${scene.transition}`)
-      lines.push(`场次限额：${scene.durationLimit} 秒｜预计：${durationOfScene(scene)} 秒`)
+      lines.push(`场次限额：${scene.durationLimit} 秒｜预计：${sceneDuration} 秒${overlap > 0 ? `（已扣除提前入声重叠 ${overlap} 秒）` : ''}`)
       lines.push('-'.repeat(34))
       scene.cues.forEach((cue, cueIndex) => {
-        const prefix = `${String(cueIndex + 1).padStart(2, '0')} [${durationOfCue(cue).toFixed(1)}s]`
+        const timing = timings[cueIndex]
+        const prefix = `${String(cueIndex + 1).padStart(2, '0')} [起始 ${timing.start.toFixed(1)}s｜时长 ${timing.duration.toFixed(1)}s｜提前 ${timing.leadIn.toFixed(1)}s]`
         if (cue.kind === 'dialogue') {
           const role = document.characters.find((character) => character.id === cue.characterId)?.name ?? '未指定角色'
           lines.push(`${prefix} ${role}｜${cue.emotion || '自然'}｜语速 ${cue.rate}`)
@@ -375,6 +429,7 @@ export function useStudio() {
     saveState,
     durationOfCue,
     durationOfScene,
+    cueTimings,
     updateProject,
     updateScene,
     updateCue,

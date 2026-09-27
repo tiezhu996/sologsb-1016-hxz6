@@ -73,6 +73,8 @@ h3 { margin: 3px 0 0; font-size: 21px; }
 .cue-main { min-width: 0; padding: 12px 14px 14px; }
 .cue-topline { display: flex; align-items: center; gap: 9px; margin-bottom: 11px; }
 .cue-number { color: #66738a; font: 700 11px monospace; }
+.cue-start { color: #73daca; font: 700 11px monospace; }
+.lead-pill { padding: 3px 8px; color: #e0af68; border-radius: 99px; background: #0e1420; font: 700 11px monospace; }
 .kind-select { width: 92px; }
 .duration-pill { margin-left: auto; padding: 3px 8px; color: #8492a9; border-radius: 99px; background: #0e1420; font: 700 11px monospace; }
 .cue-grid { display: grid; grid-template-columns: repeat(4, minmax(100px, 1fr)); gap: 8px; }

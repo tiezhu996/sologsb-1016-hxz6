@@ -30,6 +30,7 @@ const {
   saveState,
   durationOfCue,
   durationOfScene,
+  cueTimings,
   updateProject,
   updateScene,
   updateCue,
@@ -90,6 +91,13 @@ const projectMinutes = computed(() => `${Math.floor(totalDuration.value / 60)}:$
 const pendingCount = computed(() => pendingChanges.value.length)
 const warningCount = computed(() => warnings.value.length)
 const saveLabel = computed(() => saveState.value === 'saved' ? '已保存到本机' : '正在保存…')
+const selectedCueTimings = computed(() => (selectedScene.value ? cueTimings(selectedScene.value) : []))
+
+function previousCueDuration(index: number) {
+  const scene = selectedScene.value
+  if (!scene || index <= 0) return 0
+  return durationOfCue(scene.cues[index - 1])
+}
 
 function cueName(cue: Cue) {
   if (cue.kind === 'dialogue') return state.value.document.characters.find((item) => item.id === cue.characterId)?.name ?? '未指定角色'
@@ -300,8 +308,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               <div class="cue-main">
                 <div class="cue-topline">
                   <span class="cue-number">{{ String(index + 1).padStart(2, '0') }}</span>
+                  <span v-if="selectedCueTimings[index]" class="cue-start" title="在场次内从第几秒开始">▸ {{ selectedCueTimings[index].start.toFixed(1) }}s</span>
                   <n-select class="kind-select" size="small" :value="cue.kind" :options="kindOptions" @update:value="changeCueKind(cue, $event)" />
                   <n-tag size="small" :bordered="false">{{ cueName(cue) }}</n-tag>
+                  <span v-if="selectedCueTimings[index]?.leadIn" class="lead-pill" title="压在前一条上的提前入声">提前 {{ selectedCueTimings[index].leadIn.toFixed(1) }}s</span>
                   <span class="duration-pill">{{ durationOfCue(cue).toFixed(1) }}s</span>
                   <n-button size="tiny" tertiary type="error" @click="deleteCue(cue.id)">删除</n-button>
                 </div>
@@ -313,6 +323,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <n-input-number :value="cue.manualDuration" clearable placeholder="自动" :min="0.5" :step="0.5" @update:value="updateCue(cue.id, 'manualDuration', $event ?? undefined)">
                     <template #suffix>手动秒</template>
                   </n-input-number>
+                  <n-input-number
+                    :value="cue.leadIn"
+                    clearable
+                    placeholder="不提前"
+                    :min="0"
+                    :max="previousCueDuration(index)"
+                    :step="0.5"
+                    :disabled="index === 0"
+                    @update:value="updateCue(cue.id, 'leadIn', $event ?? undefined)"
+                  >
+                    <template #suffix>提前入声秒</template>
+                  </n-input-number>
                   <n-input class="span-4" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" :value="cue.text" @update:value="updateCue(cue.id, 'text', $event)" />
                 </div>
 
@@ -322,6 +344,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <n-input-number :value="cue.manualDuration" clearable placeholder="使用素材时长" :min="0.2" :step="0.5" @update:value="updateCue(cue.id, 'manualDuration', $event ?? undefined)">
                     <template #suffix>覆盖秒数</template>
                   </n-input-number>
+                  <n-input-number
+                    :value="cue.leadIn"
+                    clearable
+                    placeholder="不提前"
+                    :min="0"
+                    :max="previousCueDuration(index)"
+                    :step="0.5"
+                    :disabled="index === 0"
+                    @update:value="updateCue(cue.id, 'leadIn', $event ?? undefined)"
+                  >
+                    <template #suffix>提前入声秒</template>
+                  </n-input-number>
                 </div>
 
                 <div v-else class="cue-grid">
@@ -329,6 +363,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   <n-input :value="cue.text" placeholder="转场说明" @update:value="updateCue(cue.id, 'text', $event)" />
                   <n-input-number :value="cue.manualDuration" :min="0" :step="0.5" @update:value="updateCue(cue.id, 'manualDuration', $event ?? undefined)">
                     <template #suffix>秒</template>
+                  </n-input-number>
+                  <n-input-number
+                    :value="cue.leadIn"
+                    clearable
+                    placeholder="不提前"
+                    :min="0"
+                    :max="previousCueDuration(index)"
+                    :step="0.5"
+                    :disabled="index === 0"
+                    @update:value="updateCue(cue.id, 'leadIn', $event ?? undefined)"
+                  >
+                    <template #suffix>提前入声秒</template>
                   </n-input-number>
                 </div>
               </div>

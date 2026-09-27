@@ -26,6 +26,8 @@ export interface Cue {
   soundEffectId?: string
   transition: string
   manualDuration?: number
+  /** 提前入声秒数：声音压在紧挨着的前一条上的时长，有效量不超过前一条自身时长 */
+  leadIn?: number
 }
 
 export interface Scene {
@@ -71,6 +73,15 @@ export interface StudioState {
   pending: PendingChange[]
   frozen: FrozenVersion[]
   updatedAt: string
+}
+
+export interface CueTiming {
+  /** 在所属场次内的起始秒（已按提前入声与前一条重叠） */
+  start: number
+  /** 实际生效的提前入声秒数 */
+  leadIn: number
+  /** 本条自身时长 */
+  duration: number
 }
 
 export interface WarningItem {
